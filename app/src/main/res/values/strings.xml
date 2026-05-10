@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">题库助手</string>
+    <string name="title_main">题库助手</string>
+    <string name="btn_copy_prompt">复制提示词</string>
+    <string name="btn_select_excel">选择Excel文件</string>
+    <string name="btn_input_text">输入文本结果</string>
+    <string name="btn_view_history">查看历史</string>
+    <string name="btn_start_floating">启动悬浮窗</string>
+    <string name="hint_paste_text">请粘贴AI处理后的文本结果</string>
+    <string name="title_text_input">输入AI处理结果</string>
+    <string name="title_history">历史记录</string>
+    <string name="msg_copy_success">提示词已复制到剪贴板</string>
+    <string name="msg_parse_success">成功导入 %d 道题</string>
+    <string name="msg_parse_failed">解析失败: %s</string>
+    <string name="msg_floating_started">悬浮窗已启动</string>
+    <string name="msg_request_overlay_permission">请授予悬浮窗权限</string>
+    <string name="msg_no_match">未找到匹配的题目</string>
+    <string name="msg_recognizing">正在识别屏幕内容...</string>
+    <string name="label_question_count">共 %d 道题</string>
+    <string name="title_settings">设置</string>
+    <string name="accessibility_service_description">自动答题服务可以帮助您自动识别屏幕上的题目，并在题库中查找答案后自动点击正确答案选项。请放心，所有操作均在本地完成，不会收集您的任何个人信息。</string>
+    <string name="auto_answer_enabled">自动答题已启用</string>
+    <string name="auto_answer_disabled">自动答题已关闭</string>
+    <string name="found_answer">找到答案: %s</string>
+</resources>
