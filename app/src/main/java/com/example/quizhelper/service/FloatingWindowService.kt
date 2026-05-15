@@ -143,7 +143,7 @@ class FloatingWindowService : Service() {
     private fun loadQuestions() {
         serviceScope.launch {
             allQuestions = withContext(Dispatchers.IO) {
-                database.questionDao().searchByContent("")
+                database.questionDao().getAllQuestionsList()
             }
         }
     }

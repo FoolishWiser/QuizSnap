@@ -19,7 +19,6 @@ class HistoryActivity : AppCompatActivity() {
     private lateinit var binding: ActivityHistoryBinding
     private lateinit var database: AppDatabase
     private lateinit var quizBankAdapter: QuizBankAdapter
-    private val quizBanks = mutableListOf<QuizBankInfo>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,7 +33,6 @@ class HistoryActivity : AppCompatActivity() {
 
     private fun setupUI() {
         quizBankAdapter = QuizBankAdapter(
-            quizBanks,
             onItemClick = { bankInfo ->
                 val intent = Intent(this, QuizDetailActivity::class.java).apply {
                     putExtra("quiz_name", bankInfo.name)
@@ -72,21 +70,11 @@ class HistoryActivity : AppCompatActivity() {
 
     private fun loadQuizBanks() {
         lifecycleScope.launch {
-            val names = withContext(Dispatchers.IO) {
-                database.questionDao().getAllQuizNamesList()
+            val stats = withContext(Dispatchers.IO) {
+                database.questionDao().getQuizBankStats()
             }
-            quizBanks.clear()
-            for (name in names) {
-                val count = withContext(Dispatchers.IO) {
-                    database.questionDao().getQuestionCountByQuizName(name)
-                }
-                val time = withContext(Dispatchers.IO) {
-                    database.questionDao().getMinCreateTimeByQuizName(name)
-                }
-                quizBanks.add(QuizBankInfo(name, count, time))
-            }
-            quizBankAdapter.notifyDataSetChanged()
-            binding.tvCount.text = "共 ${quizBanks.size} 个题库"
+            quizBankAdapter.submitList(stats.map { QuizBankInfo(it.quizName, it.questionCount, it.minCreateTime) })
+            binding.tvCount.text = "共 ${stats.size} 个题库"
         }
     }
 }

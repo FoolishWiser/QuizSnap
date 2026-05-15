@@ -38,7 +38,7 @@ class QuizDetailActivity : AppCompatActivity() {
 
         binding.btnBack.setOnClickListener { finish() }
 
-        questionAdapter = QuestionAdapter(questions) { question ->
+        questionAdapter = QuestionAdapter { question ->
             showEditQuestionDialog(question)
         }
         binding.recyclerViewQuizQuestions.layoutManager = LinearLayoutManager(this)
@@ -55,6 +55,7 @@ class QuizDetailActivity : AppCompatActivity() {
                             database.questionDao().deleteByQuizName(quizName)
                         }
                         Toast.makeText(this@QuizDetailActivity, "已删除「$quizName」", Toast.LENGTH_SHORT).show()
+                        // 在 UI 线程执行 finish()
                         finish()
                     }
                 }

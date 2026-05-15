@@ -4,16 +4,16 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
-import androidx.cardview.widget.CardView
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.example.quizhelper.R
 import com.example.quizhelper.model.Question
 import com.example.quizhelper.utils.QuestionMatcher
 
 class QuestionAdapter(
-    private val questions: List<Question>,
     private val onItemClick: (Question) -> Unit = {}
-) : RecyclerView.Adapter<QuestionAdapter.QuestionViewHolder>() {
+) : ListAdapter<Question, QuestionAdapter.QuestionViewHolder>(DiffCallback()) {
 
     class QuestionViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val tvType: TextView = itemView.findViewById(R.id.tvType)
@@ -21,7 +21,7 @@ class QuestionAdapter(
         val tvOptions: TextView = itemView.findViewById(R.id.tvOptions)
         val tvAnswer: TextView = itemView.findViewById(R.id.tvAnswer)
         val tvEditHint: TextView = itemView.findViewById(R.id.tvEditHint)
-        val cardView: CardView = itemView.findViewById(R.id.cardQuestion)
+        val cardView: com.google.android.material.card.MaterialCardView = itemView.findViewById(R.id.cardQuestion)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): QuestionViewHolder {
@@ -31,11 +31,11 @@ class QuestionAdapter(
     }
 
     override fun onBindViewHolder(holder: QuestionViewHolder, position: Int) {
-        val question = questions[position]
-        
+        val question = getItem(position)
+
         holder.tvType.text = QuestionMatcher.getTypeDisplayText(question.type)
         holder.tvContent.text = question.content
-        
+
         // 显示选项
         if (question.options.isNotEmpty()) {
             val options = question.options.split("|")
@@ -47,15 +47,23 @@ class QuestionAdapter(
         } else {
             holder.tvOptions.visibility = View.GONE
         }
-        
+
         // 显示答案
         holder.tvAnswer.text = "答案: ${QuestionMatcher.getAnswerDisplayText(question)}"
-        
+
         // 点击编辑
         holder.cardView.setOnClickListener {
             onItemClick(question)
         }
     }
 
-    override fun getItemCount(): Int = questions.size
+    class DiffCallback : DiffUtil.ItemCallback<Question>() {
+        override fun areItemsTheSame(oldItem: Question, newItem: Question): Boolean {
+            return oldItem.id == newItem.id
+        }
+
+        override fun areContentsTheSame(oldItem: Question, newItem: Question): Boolean {
+            return oldItem == newItem
+        }
+    }
 }

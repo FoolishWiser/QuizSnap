@@ -1,32 +1,105 @@
+# ============================
 # Gradle
+# ============================
 .gradle/
 build/
 !gradle/wrapper/gradle-wrapper.jar
 gradle/wrapper/*.tmp
 gradle/wrapper/*.lck
 gradle/wrapper/*.ok
+gradle/wrapper/gradle-wrapper.properties
+.kotlin/
 
-# IDE
+# ============================
+# IDE - IntelliJ / Android Studio
+# ============================
 .idea/
 *.iml
-.DS_Store
+*.iws
+*.ipr
+.idea_modules/
+*.idea/
+*.workspace
 
-# Local
+# ============================
+# OS files
+# ============================
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+*.swp
+*.swo
+*~
+
+# ============================
+# Local config
+# ============================
 local.properties
 *.keystore
 *.jks
+debug.keystore
+release.keystore
+*.key
+google-services.json
+GoogleService-Info.plist
 
+# ============================
 # Build outputs
+# ============================
 app/build/
+lib/build/
 *.apk
 *.aab
 *.ap_
 *.dex
+*.aar
+*.war
+*.ear
+output.json
+R.txt
 
-# Misc
+# ============================
+# Kotlin / Java
+# ============================
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# ============================
+# Native
+# ============================
 .cxx/
+*.so
+*.o
+*.obj
+
+# ============================
+# Android Profiler / Debug
+# ============================
+*.hprof
+*.crash
+captures/
+.navigation/
+
+# ============================
+# Lint
+# ============================
+lint/
+lint-results-*.xml
+lint-baseline-*.xml
+
+# ============================
+# Test reports
+# ============================
+reports/
+test-results/
+*.test-results
+outputs/
+
+# ============================
+# Logs / temp
+# ============================
 *.log
 *.tmp
-*.swp
-*.swo
-*~
+*.bak

@@ -22,66 +22,71 @@ object ExcelParser {
      */
     fun parseExcel(inputStream: InputStream, quizName: String = "默认题库"): List<Question> {
         val questions = mutableListOf<Question>()
-        
+
         try {
-            val workbook = WorkbookFactory.create(inputStream)
-            val sheet = workbook.getSheetAt(0)
-            
-            // 跳过表头，从第二行开始
-            for (rowIndex in 1..sheet.lastRowNum) {
-                val row = sheet.getRow(rowIndex) ?: continue
-                
-                try {
-                    // 读取题目类型
-                    val typeCell = row.getCell(0)
-                    val type = when (typeCell?.stringCellValue?.trim()) {
-                        "单选" -> "single"
-                        "多选" -> "multiple"
-                        "判断" -> "judgment"
-                        else -> continue
-                    }
-                    
-                    // 读取题目内容
-                    val contentCell = row.getCell(1)
-                    val content = contentCell?.stringCellValue?.trim() ?: continue
-                    
-                    // 读取选项
-                    val options = mutableListOf<String>()
-                    for (i in 2..5) {
-                        val optionCell = row.getCell(i)
-                        val option = optionCell?.stringCellValue?.trim()
-                        if (!option.isNullOrEmpty()) {
-                            options.add(option)
+            // 使用 use 块自动关闭 Workbook
+            WorkbookFactory.create(inputStream).use { workbook ->
+                val sheet = workbook.getSheetAt(0)
+
+                // 空表格检查
+                if (sheet.lastRowNum < 1) {
+                    return emptyList()
+                }
+
+                // 跳过表头，从第二行开始
+                for (rowIndex in 1..sheet.lastRowNum) {
+                    val row = sheet.getRow(rowIndex) ?: continue
+
+                    try {
+                        // 读取题目类型
+                        val typeCell = row.getCell(0)
+                        val type = when (typeCell?.stringCellValue?.trim()) {
+                            "单选" -> "single"
+                            "多选" -> "multiple"
+                            "判断" -> "judgment"
+                            else -> continue
                         }
+
+                        // 读取题目内容
+                        val contentCell = row.getCell(1)
+                        val content = contentCell?.stringCellValue?.trim() ?: continue
+
+                        // 读取选项
+                        val options = mutableListOf<String>()
+                        for (i in 2..5) {
+                            val optionCell = row.getCell(i)
+                            val option = optionCell?.stringCellValue?.trim()
+                            if (!option.isNullOrEmpty()) {
+                                options.add(option)
+                            }
+                        }
+
+                        // 读取正确答案
+                        val answerCell = row.getCell(6)
+                        val correctAnswer = answerCell?.stringCellValue?.trim() ?: ""
+
+                        // 创建Question对象
+                        val question = Question(
+                            type = type,
+                            content = content,
+                            options = options.joinToString("|"),
+                            correctAnswer = correctAnswer,
+                            quizName = quizName
+                        )
+
+                        questions.add(question)
+
+                    } catch (e: Exception) {
+                        Log.e(TAG, "解析第${rowIndex + 1}行时出错: ${e.message}")
                     }
-                    
-                    // 读取正确答案
-                    val answerCell = row.getCell(6)
-                    val correctAnswer = answerCell?.stringCellValue?.trim() ?: ""
-                    
-                    // 创建Question对象
-                    val question = Question(
-                        type = type,
-                        content = content,
-                        options = options.joinToString("|"),
-                        correctAnswer = correctAnswer,
-                        quizName = quizName
-                    )
-                    
-                    questions.add(question)
-                    
-                } catch (e: Exception) {
-                    Log.e(TAG, "解析第${rowIndex + 1}行时出错: ${e.message}")
                 }
             }
-            
-            workbook.close()
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "解析Excel文件时出错: ${e.message}")
             throw e
         }
-        
+
         return questions
     }
     

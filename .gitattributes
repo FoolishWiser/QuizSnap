@@ -1,0 +1,56 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Gradle
+*.gradle text diff=gradle
+*.gradle.kts text diff=gradle
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+
+# Kotlin
+*.kt text
+*.kts text
+*.ktm text
+*.ktx text
+
+# Android XML
+*.xml text
+*.xsd text
+*.xslt text
+*.xsl text
+*.dtd text
+
+# Properties / YAML
+*.properties text
+*.yml text
+*.yaml text
+*.json text
+*.txt text
+*.md text
+
+# Binary files - never modify
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.mp4 binary
+*.mp3 binary
+*.aac binary
+*.wav binary
+*.ogg binary
+*.pdf binary
+*.doc binary
+*.docx binary
+*.xls binary
+*.xlsx binary
+
+# Android specific
+*.dex binary
+*.apk binary
+*.aab binary
+*.jar binary
+*.aar binary
+*.keystore binary
+*.jks binary

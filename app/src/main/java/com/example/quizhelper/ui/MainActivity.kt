@@ -15,6 +15,7 @@ import com.example.quizhelper.databinding.ActivityMainBinding
 import com.example.quizhelper.model.Question
 import com.example.quizhelper.utils.ExcelParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -23,7 +24,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var database: AppDatabase
     private lateinit var questionAdapter: QuestionAdapter
-    private val questions = mutableListOf<Question>()
     
     // 文件选择器
     private val filePickerLauncher = registerForActivityResult(
@@ -44,7 +44,7 @@ class MainActivity : AppCompatActivity() {
         database = AppDatabase.getDatabase(this)
         
         setupUI()
-        loadQuestions()
+        observeQuestions()
     }
     
     private fun setupUI() {
@@ -84,12 +84,21 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
         
-        // 设置RecyclerView
-        questionAdapter = QuestionAdapter(questions) { question ->
+        // 设置RecyclerView - 使用Flow响应式更新，无需外部数据列表
+        questionAdapter = QuestionAdapter { question ->
             showEditQuestionDialog(question)
         }
         binding.recyclerView.layoutManager = LinearLayoutManager(this)
         binding.recyclerView.adapter = questionAdapter
+    }
+    
+    // 使用 Flow 响应式监听数据库变化，自动更新列表
+    private fun observeQuestions() {
+        lifecycleScope.launch {
+            database.questionDao().getRecentQuestions().collectLatest { list ->
+                questionAdapter.submitList(list)
+            }
+        }
     }
     
     private fun getAiPrompt(): String {
@@ -132,16 +141,21 @@ class MainActivity : AppCompatActivity() {
                 val fileName = getFileName(uri)
                 val isPdf = fileName.endsWith(".pdf", true)
                 val isExcel = fileName.endsWith(".xlsx", true) || fileName.endsWith(".xls", true)
-                
+
                 if (isExcel) {
-                    // 解析Excel
-                    val inputStream = contentResolver.openInputStream(uri)
-                    if (inputStream != null) {
+                    // 解析Excel - 使用 use 块自动关闭 InputStream
+                    contentResolver.openInputStream(uri)?.use { inputStream ->
                         val parsedQuestions = withContext(Dispatchers.IO) {
                             ExcelParser.parseExcel(inputStream, fileName)
                         }
-                        // 先显示命名对话框，再保存
-                        saveWithQuizNameDialog(parsedQuestions, fileName)
+                        if (parsedQuestions.isEmpty()) {
+                            Toast.makeText(this@MainActivity, "Excel文件中未解析到有效题目", Toast.LENGTH_SHORT).show()
+                        } else {
+                            // 先显示命名对话框，再保存
+                            saveWithQuizNameDialog(parsedQuestions, fileName)
+                        }
+                    } ?: run {
+                        Toast.makeText(this@MainActivity, "无法读取文件，请重试", Toast.LENGTH_SHORT).show()
                     }
                 } else if (isPdf) {
                     Toast.makeText(this@MainActivity, "PDF解析功能暂不支持，请使用AI文本导入方式", Toast.LENGTH_LONG).show()
@@ -171,7 +185,7 @@ class MainActivity : AppCompatActivity() {
                     withContext(Dispatchers.IO) {
                         database.questionDao().insertAll(questionsWithName)
                     }
-                    loadQuestions()
+                    // Flow 自动更新列表，无需手动调用 loadQuestions()
                     Toast.makeText(this@MainActivity, "成功导入${questionsWithName.size}道题到「$quizName」", Toast.LENGTH_SHORT).show()
                 }
             }
@@ -264,12 +278,12 @@ class MainActivity : AppCompatActivity() {
                     .setView(nameEditText)
                     .setPositiveButton("保存") { _, _ ->
                         val quizName = nameEditText.text.toString().trim().ifEmpty { "默认题库" }
+                        val questionsWithName = parsedQuestions.map { it.copy(quizName = quizName) }
                         lifecycleScope.launch {
-                            val questionsWithName = parsedQuestions.map { it.copy(quizName = quizName) }
                             withContext(Dispatchers.IO) {
                                 database.questionDao().insertAll(questionsWithName)
                             }
-                            loadQuestions()
+                            // Flow 自动更新列表，无需手动调用 loadQuestions()
                             Toast.makeText(this@MainActivity, "成功导入${questionsWithName.size}道题到「$quizName」", Toast.LENGTH_SHORT).show()
                         }
                     }
@@ -337,23 +351,12 @@ class MainActivity : AppCompatActivity() {
                     withContext(Dispatchers.IO) {
                         database.questionDao().update(updatedQuestion)
                     }
-                    loadQuestions()
+                    // Flow 自动更新列表，无需手动调用 loadQuestions()
                     Toast.makeText(this@MainActivity, "题目已更新", Toast.LENGTH_SHORT).show()
                 }
             }
             .setNegativeButton("取消", null)
             .show()
-    }
-    
-    private fun loadQuestions() {
-        lifecycleScope.launch {
-            val allQuestions = withContext(Dispatchers.IO) {
-                database.questionDao().getAllQuestionsList()
-            }
-            questions.clear()
-            questions.addAll(allQuestions)
-            questionAdapter.notifyDataSetChanged()
-        }
     }
     
     private fun startFloatingWindow() {
