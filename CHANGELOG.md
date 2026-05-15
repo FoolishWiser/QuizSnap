@@ -1,5 +1,19 @@
 # 更新日志
 
+## v1.1.0 (2026-05-15)
+
+- **Shizuku 模式** — 新增基于 Shizuku 框架的自动答题方式，无需无障碍权限
+- **答题配置** — 支持设置答题总数量、最低总时间，每题点击时间自动生成随机数
+- **时间保证** — 每题随机时间总和 ≥ 设定最低时间 + 10 秒
+- **配置预览** — 设置界面实时预览随机时间分配和总时间
+- **UI 优化** — 设置页面新增 Shizuku 开关、状态显示、配置按钮
+- **性能优化** — QuestionAdapter 和 QuizBankAdapter 改用 ListAdapter + DiffUtil，增量更新避免卡顿
+- **数据响应式** — MainActivity 改用 Room Flow 响应式更新，无需手动加载
+- **Bug 修复** — 数据库迁移策略、InputStream 泄漏、N+1 查询、IO 线程 finish() 等问题
+- **代码清理** — 移除冗余权限声明、重复颜色资源、统一 CardView 类型
+- **AndroidManifest** — 添加 Shizuku Provider 声明
+- **版本升级** — v1.0.0 → v1.1.0
+
 ## v1.0.0 (2026-05-10)
 
 - **UI 现代化改造** — 升级 Material 3 主题，卡片式布局，圆角设计

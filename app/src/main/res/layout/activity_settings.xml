@@ -43,7 +43,78 @@
 
         </LinearLayout>
 
-        <!-- 自动答题设置 -->
+        <!-- 自动答题设置（无障碍模式） -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@color/md_surface_variant"
+            app:strokeColor="@color/md_outline_variant"
+            app:strokeWidth="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="20dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="自动答题（无障碍）"
+                            android:textSize="18sp"
+                            android:textColor="@color/md_on_surface"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="通过无障碍服务自动识别屏幕并点击"
+                            android:textSize="13sp"
+                            android:textColor="@color/md_on_surface_variant"
+                            android:layout_marginTop="2dp" />
+
+                    </LinearLayout>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/switchAutoAnswer"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="× 无障碍权限未开启"
+                    android:textSize="13sp"
+                    android:textColor="@color/md_error"
+                    android:layout_marginTop="12dp"
+                    android:padding="10dp"
+                    android:background="#1AF44336"
+                    android:gravity="center_vertical"
+                    android:drawablePadding="6dp" />
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Shizuku 自动答题模式 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -75,7 +146,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="自动答题"
+                            android:text="自动答题（Shizuku）"
                             android:textSize="18sp"
                             android:textColor="@color/md_on_surface"
                             android:textStyle="bold" />
@@ -83,7 +154,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="自动识别屏幕题目并作答"
+                            android:text="通过 Shizuku 提升权限模拟点击（无需无障碍）"
                             android:textSize="13sp"
                             android:textColor="@color/md_on_surface_variant"
                             android:layout_marginTop="2dp" />
@@ -91,17 +162,17 @@
                     </LinearLayout>
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/switchAutoAnswer"
+                        android:id="@+id/switchShizuku"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content" />
 
                 </LinearLayout>
 
                 <TextView
-                    android:id="@+id/tvStatus"
+                    android:id="@+id/tvShizukuStatus"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="× 无障碍权限未开启"
+                    android:text="× Shizuku 未启用"
                     android:textSize="13sp"
                     android:textColor="@color/md_error"
                     android:layout_marginTop="12dp"
@@ -109,6 +180,15 @@
                     android:background="#1AF44336"
                     android:gravity="center_vertical"
                     android:drawablePadding="6dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnShizukuConfig"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="10dp"
+                    android:text="答题配置：共 10 题，最低 30 秒"
+                    android:textSize="13sp"
+                    android:enabled="false" />
 
             </LinearLayout>
 

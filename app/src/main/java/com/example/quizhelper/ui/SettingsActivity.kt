@@ -6,12 +6,17 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.example.quizhelper.R
+import com.example.quizhelper.data.AutoAnswerConfig
 import com.example.quizhelper.databinding.ActivitySettingsBinding
+import com.example.quizhelper.service.ShizukuAnswerService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySettingsBinding
-    
+
     companion object {
         const val PREFS_NAME = "quiz_helper_prefs"
         const val KEY_AUTO_ANSWER = "auto_answer_enabled"
@@ -33,12 +38,11 @@ class SettingsActivity : AppCompatActivity() {
 
         // 加载当前设置状态
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        binding.switchAutoAnswer.isChecked = prefs.getBoolean(KEY_AUTO_ANSWER, false)
 
-        // 自动答题开关
+        // ---------- 无障碍自动答题 ----------
+        binding.switchAutoAnswer.isChecked = prefs.getBoolean(KEY_AUTO_ANSWER, false)
         binding.switchAutoAnswer.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
-                // 检查无障碍权限
                 if (!isAccessibilityServiceEnabled()) {
                     showAccessibilityDialog()
                 } else {
@@ -50,6 +54,45 @@ class SettingsActivity : AppCompatActivity() {
                 Toast.makeText(this, "自动答题已关闭", Toast.LENGTH_SHORT).show()
             }
         }
+
+        // ---------- Shizuku 模式 ----------
+        val shizukuEnabled = AutoAnswerConfig.isShizukuEnabled(this)
+        binding.switchShizuku.isChecked = shizukuEnabled
+        binding.switchShizuku.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                // 尝试初始化 Shizuku
+                ShizukuAnswerService.shizukuBinder = try {
+                    // 通过反射获取 Shizuku Binder（兼容不同版本）
+                    val shizukuClass = Class.forName("moe.shizuku.api.Shizuku")
+                    val getBinder = shizukuClass.getMethod("getBinder")
+                    getBinder.invoke(null) as android.os.IBinder
+                } catch (e: Exception) {
+                    null
+                }
+
+                CoroutineScope(Dispatchers.Main).launch {
+                    val ok = ShizukuAnswerService.init(this@SettingsActivity)
+                    if (ok) {
+                        AutoAnswerConfig.setShizukuEnabled(this@SettingsActivity, true)
+                        Toast.makeText(this@SettingsActivity, "Shizuku 模式已开启", Toast.LENGTH_SHORT).show()
+                        showShizukuConfigDialog()
+                    } else {
+                        binding.switchShizuku.isChecked = false
+                        showShizukuGuideDialog()
+                    }
+                }
+            } else {
+                AutoAnswerConfig.setShizukuEnabled(this, false)
+                ShizukuAnswerService.cleanup()
+                Toast.makeText(this, "Shizuku 模式已关闭", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // Shizuku 配置按钮
+        binding.btnShizukuConfig.setOnClickListener {
+            showShizukuConfigDialog()
+        }
+        updateShizukuConfigButton()
 
         // 状态说明
         updateStatusText()
@@ -97,24 +140,142 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun showShizukuGuideDialog() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("需要 Shizuku")
+            .setMessage("Shizuku 模式需要安装 Shizuku 应用并授予权限。\n\n" +
+                    "请先安装 Shizuku（酷安/官网下载），然后在 Shizuku 应用中启动服务后返回。")
+            .setPositiveButton("了解", null)
+            .show()
+    }
+
+    private fun showShizukuConfigDialog() {
+        val config = AutoAnswerConfig.load(this)
+        val layout = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(32, 24, 32, 24)
+        }
+
+        val countInput = android.widget.EditText(this).apply {
+            setText(config.totalQuestions.toString())
+            hint = "答题总数量"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, 0, 0, 16) }
+        }
+
+        val timeInput = android.widget.EditText(this).apply {
+            setText(config.minTotalTimeSec.toString())
+            hint = "最低总时间（秒）"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        }
+
+        layout.addView(android.widget.TextView(this).apply {
+            text = "答题数量"
+            textSize = 14f
+        })
+        layout.addView(countInput)
+        layout.addView(android.widget.TextView(this).apply {
+            text = "最低总时间（秒）"
+            textSize = 14f
+            setPadding(0, 8, 0, 0)
+        })
+        layout.addView(timeInput)
+        layout.addView(android.widget.TextView(this).apply {
+            text = "\n系统将自动为每题生成随机点击时间，保证总时间 ≥ 设定值 + 10 秒"
+            textSize = 12f
+            setTextColor(0xFF79747E.toInt())
+            setPadding(0, 8, 0, 0)
+        })
+        layout.addView(android.widget.TextView(this).apply {
+            text = "\n当前配置示例："
+            textSize = 12f
+            setTextColor(0xFF6750A4.toInt())
+        })
+        layout.addView(android.widget.TextView(this).apply {
+            id = android.R.id.text1
+            textSize = 11f
+            setTextColor(0xFF49454F.toInt())
+        })
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Shizuku 答题配置")
+            .setView(layout)
+            .setPositiveButton("保存") { _, _ ->
+                val total = countInput.text.toString().toIntOrNull()?.coerceIn(1, 200) ?: 10
+                val minTime = timeInput.text.toString().toIntOrNull()?.coerceIn(10, 600) ?: 30
+                val newConfig = AutoAnswerConfig(totalQuestions = total, minTotalTimeSec = minTime)
+                AutoAnswerConfig.save(this, newConfig)
+                Toast.makeText(this, "配置已保存", Toast.LENGTH_SHORT).show()
+                updateShizukuConfigButton()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+
+        // 点击时更新预览
+        val previewText = layout.findViewById<android.widget.TextView>(android.R.id.text1)
+        fun updatePreview() {
+            val t = countInput.text.toString().toIntOrNull()?.coerceIn(1, 200) ?: 10
+            val mt = timeInput.text.toString().toIntOrNull()?.coerceIn(10, 600) ?: 30
+            val previewConfig = AutoAnswerConfig(totalQuestions = t, minTotalTimeSec = mt)
+            val times = previewConfig.generateClickTimes()
+            val totalSec = times.sum() / 1000.0
+            previewText.text = "每题时间（ms）：${times.take(5).joinToString(", ")}${if (times.size > 5) "..." else ""}\n总时间：${"%.1f".format(totalSec)} 秒（要求 ≥ ${mt + 10} 秒）"
+        }
+        countInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) = updatePreview()
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+        timeInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) = updatePreview()
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+        // 初始预览
+        updatePreview()
+    }
+
+    private fun updateShizukuConfigButton() {
+        val config = AutoAnswerConfig.load(this)
+        binding.btnShizukuConfig.text = "答题配置：共 ${config.totalQuestions} 题，最低 ${config.minTotalTimeSec} 秒"
+    }
+
     private fun updateStatusText() {
         val accessibilityEnabled = isAccessibilityServiceEnabled()
         val autoAnswerEnabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             .getBoolean(KEY_AUTO_ANSWER, false)
+        val shizukuEnabled = AutoAnswerConfig.isShizukuEnabled(this)
 
         binding.tvStatus.text = when {
-            accessibilityEnabled && autoAnswerEnabled -> "✓ 自动答题已启用"
+            accessibilityEnabled && autoAnswerEnabled -> "✓ 无障碍自动答题已启用"
             accessibilityEnabled && !autoAnswerEnabled -> "○ 无障碍权限已开启，功能未启用"
             else -> "× 无障碍权限未开启"
+        }
+
+        // Shizuku 状态
+        if (shizukuEnabled && ShizukuAnswerService.isInitialized) {
+            binding.tvShizukuStatus.text = "✓ Shizuku 模式已就绪"
+            binding.tvShizukuStatus.setTextColor(0xFF4CAF50.toInt())
+            binding.btnShizukuConfig.isEnabled = true
+        } else if (shizukuEnabled) {
+            binding.tvShizukuStatus.text = "○ Shizuku 正在连接..."
+            binding.tvShizukuStatus.setTextColor(0xFFFF9800.toInt())
+            binding.btnShizukuConfig.isEnabled = true
+        } else {
+            binding.tvShizukuStatus.text = "× Shizuku 未启用"
+            binding.tvShizukuStatus.setTextColor(0xFFF44336.toInt())
+            binding.btnShizukuConfig.isEnabled = false
         }
     }
 
     override fun onResume() {
         super.onResume()
-        // 每次返回页面时更新状态
         updateStatusText()
-        
-        // 检查权限状态是否改变
+
+        // 检查无障碍权限状态
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val shouldBeEnabled = prefs.getBoolean(KEY_AUTO_ANSWER, false)
         if (shouldBeEnabled && !isAccessibilityServiceEnabled()) {
