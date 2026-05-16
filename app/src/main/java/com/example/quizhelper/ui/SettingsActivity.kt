@@ -1,17 +1,22 @@
 package com.example.quizhelper.ui
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.example.quizhelper.R
 import com.example.quizhelper.data.AutoAnswerConfig
 import com.example.quizhelper.databinding.ActivitySettingsBinding
 import com.example.quizhelper.service.ShizukuAnswerService
+import com.example.quizhelper.utils.UpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -94,8 +99,74 @@ class SettingsActivity : AppCompatActivity() {
         }
         updateShizukuConfigButton()
 
+        // ---------- 检测更新 ----------
+        binding.btnCheckUpdate.setOnClickListener {
+            checkForUpdate()
+        }
+
         // 状态说明
         updateStatusText()
+    }
+
+    private fun checkForUpdate() {
+        binding.tvUpdateStatus.text = "正在检查更新..."
+        binding.btnCheckUpdate.isEnabled = false
+
+        lifecycleScope.launch {
+            try {
+                val updateInfo = withContext(Dispatchers.IO) {
+                    UpdateChecker.checkUpdate("1.1.1")
+                }
+
+                if (updateInfo != null) {
+                    showUpdateFoundDialog(updateInfo)
+                } else {
+                    binding.tvUpdateStatus.text = "✓ 当前已是最新版本"
+                    binding.tvUpdateStatus.setTextColor(0xFF4CAF50.toInt())
+                }
+            } catch (e: Exception) {
+                binding.tvUpdateStatus.text = "检查失败，请检查网络连接"
+                binding.tvUpdateStatus.setTextColor(0xFFF44336.toInt())
+            } finally {
+                binding.btnCheckUpdate.isEnabled = true
+            }
+        }
+    }
+
+    private fun showUpdateFoundDialog(info: UpdateChecker.UpdateInfo) {
+        val mirrorNames = UpdateChecker.mirrors.map { it.name }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("发现新版本 v${info.latestVersion}")
+            .setMessage("当前版本：v1.1.1\n\n${info.releaseNotes.take(500)}")
+            .setPositiveButton("立即下载") { _, _ ->
+                showMirrorSelectorDialog(info)
+            }
+            .setNegativeButton("稍后", null)
+            .show()
+    }
+
+    private fun showMirrorSelectorDialog(info: UpdateChecker.UpdateInfo) {
+        val mirrorNames = UpdateChecker.mirrors.map { it.name }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("选择下载方式")
+            .setItems(mirrorNames) { _, which ->
+                val mirror = UpdateChecker.mirrors[which]
+                // 通过镜像构建 APK 下载 URL
+                val apkUrl = if (which == 0) {
+                    "https://github.com/FoolishWiser/QuizSnap/releases/download/v${info.latestVersion}/app-debug.apk"
+                } else {
+                    "${mirror.prefix}https://github.com/FoolishWiser/QuizSnap/releases/download/v${info.latestVersion}/app-debug.apk"
+                }
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl))
+                startActivity(intent)
+
+                binding.tvUpdateStatus.text = "正在跳转下载 v${info.latestVersion}..."
+                binding.tvUpdateStatus.setTextColor(0xFF4CAF50.toInt())
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun savePreference(enabled: Boolean) {
