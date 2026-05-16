@@ -2,19 +2,16 @@ package com.example.quizhelper.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.pm.PackageManager
+import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Path
 import android.graphics.Rect
-import android.os.Build
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
-import androidx.core.content.ContextCompat
-import com.example.quizhelper.R
 import com.example.quizhelper.data.AppDatabase
 import com.example.quizhelper.model.Question
 import com.example.quizhelper.utils.QuestionMatcher
@@ -25,27 +22,20 @@ class AutoAnswerService : AccessibilityService() {
 
     companion object {
         private const val TAG = "AutoAnswerService"
-        
-        // 全局实例，供外部调用
+
         var instance: AutoAnswerService? = null
             private set
-        
-        // 是否启用自动答题
+
         @Volatile
         var isEnabled = false
-        
-        // 题库缓存
+
         val questionCache = CopyOnWriteArrayList<Question>()
-        
-        // 是否正在处理
+
         @Volatile
         var isProcessing = false
-        
-        // 上一次处理的题目内容（避免重复处理）
+
         var lastProcessedContent: String? = null
-        
-        // 匹配成功后等待时间（毫秒）
-        const val MATCH_SUCCESS_DELAY = 1500L
+
         const val CLICK_DELAY = 800L
         const val NEXT_BUTTON_DELAY = 1200L
     }
@@ -53,17 +43,16 @@ class AutoAnswerService : AccessibilityService() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var database: AppDatabase
-    
-    // 存储找到的选项节点
-    private val optionNodes = mutableListOf<AccessibilityNodeInfo>()
-    private var nextButtonNode: AccessibilityNodeInfo? = null
+    private lateinit var prefs: SharedPreferences
 
     override fun onCreate() {
         super.onCreate()
         instance = this
         database = AppDatabase.getDatabase(this)
+        prefs = getSharedPreferences("quiz_helper_prefs", Context.MODE_PRIVATE)
+        isEnabled = prefs.getBoolean("auto_answer_enabled", false)
         loadQuestions()
-        Log.d(TAG, "AutoAnswerService created")
+        Log.d(TAG, "AutoAnswerService created, isEnabled=$isEnabled")
     }
 
     override fun onDestroy() {
@@ -76,8 +65,11 @@ class AutoAnswerService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.d(TAG, "AutoAnswerService connected")
-        Toast.makeText(this, "自动答题服务已开启", Toast.LENGTH_SHORT).show()
+        isEnabled = prefs.getBoolean("auto_answer_enabled", false)
+        Log.d(TAG, "AutoAnswerService connected, isEnabled=$isEnabled")
+        if (isEnabled) {
+            Toast.makeText(this, "自动答题服务已开启", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun loadQuestions() {
@@ -97,17 +89,12 @@ class AutoAnswerService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!isEnabled || isProcessing) return
-        
         event ?: return
-        
-        // 只关注窗口内容变化事件
+
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                // 延迟处理，等待界面稳定
-                mainHandler.postDelayed({
-                    processCurrentScreen()
-                }, 500)
+                mainHandler.postDelayed({ processCurrentScreen() }, 500)
             }
         }
     }
@@ -120,14 +107,12 @@ class AutoAnswerService : AccessibilityService() {
         }
 
         isProcessing = true
-        
         try {
             val rootNode = rootInActiveWindow ?: run {
                 isProcessing = false
                 return
             }
 
-            // 提取题目内容
             val questionContent = extractQuestionContent(rootNode)
             if (questionContent.isNullOrEmpty()) {
                 Log.d(TAG, "No question content found")
@@ -135,7 +120,6 @@ class AutoAnswerService : AccessibilityService() {
                 return
             }
 
-            // 检查是否与上次处理的相同
             if (questionContent == lastProcessedContent) {
                 Log.d(TAG, "Same question as last processed, skipping")
                 isProcessing = false
@@ -144,23 +128,17 @@ class AutoAnswerService : AccessibilityService() {
 
             Log.d(TAG, "Processing question: $questionContent")
 
-            // 在题库中匹配
             val matchedQuestion = QuestionMatcher.matchQuestion(questionContent, questionCache.toList())
-            
             if (matchedQuestion != null) {
                 Log.d(TAG, "Found match: ${matchedQuestion.content}")
                 lastProcessedContent = questionContent
-                
-                // 显示找到的答案
+
                 val answerText = QuestionMatcher.getAnswerDisplayText(matchedQuestion)
                 Toast.makeText(this, "找到答案: $answerText", Toast.LENGTH_SHORT).show()
-                
-                // 找到并点击对应选项
-                findAndClickOption(rootNode, matchedQuestion)
+                findAndClickOption(matchedQuestion)
             } else {
-                Log.d(TAG, "No match found for question")
+                Log.d(TAG, "No match found")
             }
-            
         } catch (e: Exception) {
             Log.e(TAG, "Error processing screen: ${e.message}")
         } finally {
@@ -168,15 +146,9 @@ class AutoAnswerService : AccessibilityService() {
         }
     }
 
-    /**
-     * 从界面中提取题目内容
-     */
     private fun extractQuestionContent(rootNode: AccessibilityNodeInfo): String? {
         val textBuilder = StringBuilder()
-        
-        // 遍历所有节点，查找题目相关内容
         findQuestionText(rootNode, textBuilder)
-        
         return if (textBuilder.isNotEmpty()) textBuilder.toString().trim() else null
     }
 
@@ -184,16 +156,14 @@ class AutoAnswerService : AccessibilityService() {
         try {
             val text = node.text?.toString()
             val contentDesc = node.contentDescription?.toString()
-            
-            // 跳过选项类文字（太短的通常是选项）
-            if (!text.isNullOrEmpty() && text.length > 10) {
+
+            if (!text.isNullOrEmpty() && text.length > 8) {
                 textBuilder.append(text).append(" ")
             }
-            if (!contentDesc.isNullOrEmpty() && contentDesc.length > 10) {
+            if (!contentDesc.isNullOrEmpty() && contentDesc.length > 8) {
                 textBuilder.append(contentDesc).append(" ")
             }
-            
-            // 递归遍历子节点
+
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i)
                 if (child != null) {
@@ -201,291 +171,177 @@ class AutoAnswerService : AccessibilityService() {
                     child.recycle()
                 }
             }
-        } catch (e: Exception) {
-            // 忽略异常
-        }
+        } catch (_: Exception) {}
     }
 
-    /**
-     * 查找并点击正确答案选项
-     */
-    private fun findAndClickOption(rootNode: AccessibilityNodeInfo, question: Question) {
-        // 清除之前的选项节点
-        optionNodes.clear()
-        
-        // 收集所有可能是选项的节点
-        collectOptionNodes(rootNode)
-        
-        if (optionNodes.isEmpty()) {
-            Log.d(TAG, "No option nodes found")
-            return
-        }
-
+    /** 查找并点击正确答案 */
+    private fun findAndClickOption(question: Question) {
         val answerText = QuestionMatcher.getAnswerDisplayText(question)
         Log.d(TAG, "Looking for answer: $answerText")
-        
-        // 根据题目类型确定要点击的选项
-        val targetOption = when (question.type) {
-            "single" -> {
-                // 单选题：直接点击包含答案文字的选项
-                findOptionByText(answerText)
-            }
-            "multiple" -> {
-                // 多选题：依次点击各答案
-                val answers = answerText.split(",").map { it.trim() }
-                answers.forEach { ans ->
-                    findOptionByText(ans)
-                }
-                null
-            }
+
+        // 根据题目类型确定策略
+        when (question.type) {
             "judgment" -> {
-                // 判断题：根据答案点击"对"或"错"
-                findOptionByText(answerText)
+                // 判断题：找"对"/"错"的文字节点
+                clickNodeByText(answerText)
             }
-            else -> null
-        }
-        
-        if (targetOption != null) {
-            // 执行点击
-            mainHandler.postDelayed({
-                clickOnNode(targetOption)
-            }, CLICK_DELAY)
+            else -> {
+                // 单选/多选：先按编号（A/B/C/D）找，再按文字匹配
+                val answerIndex = when (answerText) {
+                    "A" -> 0; "B" -> 1; "C" -> 2; "D" -> 3; else -> -1
+                }
+                if (answerIndex >= 0) {
+                    clickNodeByIndex(answerIndex)
+                } else {
+                    clickNodeByText(answerText)
+                }
+            }
         }
     }
 
-    /**
-     * 收集所有可能是选项的节点
-     */
-    private fun collectOptionNodes(node: AccessibilityNodeInfo) {
+    /** 按索引点击选项（根据屏幕上的可选项列表） */
+    private fun clickNodeByIndex(index: Int) {
+        val rootNode = rootInActiveWindow ?: return
+        val candidates = mutableListOf<AccessibilityNodeInfo>()
+        collectClickableNodes(rootNode, candidates)
+
+        // 过滤出选项节点（去掉按钮、标题等）
+        val optionNodes = candidates.filter { n ->
+            val t = n.text?.toString() ?: ""
+            t.length < 15 && !t.contains("下一") && !t.contains("提交") && !t.contains("确定")
+        }
+
+        if (index < optionNodes.size) {
+            performClick(optionNodes[index])
+        } else if (candidates.isNotEmpty()) {
+            // 兜底：如果序号溢出，点最后一个候选
+            performClick(candidates.last())
+        }
+    }
+
+    /** 按文字搜索并点击 */
+    private fun clickNodeByText(target: String) {
+        val rootNode = rootInActiveWindow ?: return
+        val cleaned = target.trim()
+        val node = findNodeByText(rootNode, cleaned)
+        if (node != null) {
+            performClick(node)
+            return
+        }
+        Log.d(TAG, "Text node not found: $cleaned")
+    }
+
+    /** 递归收集所有可点击节点 */
+    private fun collectClickableNodes(node: AccessibilityNodeInfo, out: MutableList<AccessibilityNodeInfo>) {
         try {
-            val text = node.text?.toString()
-            val isClickable = node.isClickable
-            val isEnabled = node.isEnabled
-            
-            // 如果是可点击的节点，且文字不是太长（排除题目），且不是按钮类
-            if (isClickable && isEnabled && !text.isNullOrEmpty()) {
-                val className = node.className?.toString() ?: ""
-                // 排除Next、提交、确定等按钮
-                if (!text.contains("下一", ignoreCase = true) &&
-                    !text.contains("提交", ignoreCase = true) &&
-                    !text.contains("确定", ignoreCase = true) &&
-                    !text.contains("next", ignoreCase = true) &&
-                    !text.contains("submit", ignoreCase = true)) {
-                    optionNodes.add(node)
-                }
+            if (node.isClickable && node.isEnabled) {
+                out.add(node)
             }
-            
-            // 递归遍历
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i)
                 if (child != null) {
-                    collectOptionNodes(child)
+                    collectClickableNodes(child, out)
                     child.recycle()
                 }
             }
-        } catch (e: Exception) {
-            // 忽略
-        }
+        } catch (_: Exception) {}
     }
 
-    /**
-     * 根据答案文字查找对应的选项节点
-     */
-    private fun findOptionByText(answerText: String): AccessibilityNodeInfo? {
-        // 清理答案文字
-        val cleanAnswer = answerText.trim()
-        
-        for (node in optionNodes) {
-            try {
-                val nodeText = node.text?.toString() ?: continue
-                val contentDesc = node.contentDescription?.toString() ?: ""
-                
-                // 匹配：节点文字包含答案，或答案包含节点文字
-                if (nodeText.contains(cleanAnswer, ignoreCase = true) ||
-                    cleanAnswer.contains(nodeText, ignoreCase = true) ||
-                    contentDesc.contains(cleanAnswer, ignoreCase = true)) {
-                    return node
-                }
-                
-                // 如果答案是选项标号（A/B/C/D）
-                val optionIndex = when {
-                    cleanAnswer.equals("A", ignoreCase = true) -> 0
-                    cleanAnswer.equals("B", ignoreCase = true) -> 1
-                    cleanAnswer.equals("C", ignoreCase = true) -> 2
-                    cleanAnswer.equals("D", ignoreCase = true) -> 3
-                    else -> -1
-                }
-                
-                if (optionIndex >= 0 && optionIndex < optionNodes.size) {
-                    return optionNodes[optionIndex]
-                }
-                
-            } catch (e: Exception) {
-                continue
+    /** 按文字递归搜索节点 */
+    private fun findNodeByText(node: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
+        try {
+            val nodeText = node.text?.toString() ?: ""
+            val desc = node.contentDescription?.toString() ?: ""
+            if (nodeText.contains(text, ignoreCase = true) || desc.contains(text, ignoreCase = true)) {
+                return node
             }
-        }
-        
-        // 如果没找到精确匹配，尝试模糊匹配
-        for (node in optionNodes) {
-            try {
-                val nodeText = node.text?.toString() ?: continue
-                // 取节点文字的前几个字符匹配
-                if (nodeText.length >= 2 && cleanAnswer.startsWith(nodeText.take(2))) {
-                    return node
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i)
+                if (child != null) {
+                    val result = findNodeByText(child, text)
+                    if (result != null) { child.recycle(); return result }
+                    child.recycle()
                 }
-            } catch (e: Exception) {
-                continue
             }
-        }
-        
+        } catch (_: Exception) {}
         return null
     }
 
-    /**
-     * 在指定节点上执行点击
-     */
-    private fun clickOnNode(node: AccessibilityNodeInfo) {
+    /** 执行点击 */
+    private fun performClick(node: AccessibilityNodeInfo) {
         try {
-            val bounds = Rect()
-            node.getBoundsInScreen(bounds)
-            
-            // 计算点击位置（节点中心）
-            val x = bounds.centerX().toFloat()
-            val y = bounds.centerY().toFloat()
-            
-            Log.d(TAG, "Clicking at ($x, $y)")
-            
-            // 使用手势描述执行点击
-            val path = Path().apply {
-                moveTo(x, y)
-            }
-            
-            val gesture = GestureDescription.Builder()
-                .addStroke(GestureDescription.StrokeDescription(path, 0, 100))
-                .build()
-            
-            val result = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
-                override fun onCompleted(gestureDescription: GestureDescription?) {
-                    Log.d(TAG, "Click completed")
-                    // 点击完成后，自动点击下一题按钮
-                    mainHandler.postDelayed({
-                        clickNextButton()
-                    }, NEXT_BUTTON_DELAY)
-                }
-                
-                override fun onCancelled(gestureDescription: GestureDescription?) {
-                    Log.d(TAG, "Click cancelled")
-                }
-            }, null)
-            
-            if (!result) {
-                Log.e(TAG, "Failed to dispatch gesture")
-                // 尝试使用performAction
-                if (node.isClickable) {
-                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    mainHandler.postDelayed({
-                        clickNextButton()
-                    }, NEXT_BUTTON_DELAY)
-                }
-            }
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error clicking node: ${e.message}")
-        }
-    }
-
-    /**
-     * 查找并点击下一题/提交按钮
-     */
-    private fun clickNextButton() {
-        if (!isEnabled) return
-        
-        try {
-            val rootNode = rootInActiveWindow ?: return
-            
-            // 查找下一题按钮
-            var foundNext = false
-            findAndClickNextButton(rootNode, foundNext)
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error finding next button: ${e.message}")
-        }
-    }
-
-    private fun findAndClickNextButton(node: AccessibilityNodeInfo, foundNext: Boolean): Boolean {
-        if (foundNext) return true
-        
-        try {
-            val text = node.text?.toString() ?: ""
-            val contentDesc = node.contentDescription?.toString() ?: ""
-            val isClickable = node.isClickable
-            val isEnabled = node.isEnabled
-            
-            // 识别下一题/提交按钮
-            val isNextButton = text.contains("下一", ignoreCase = true) ||
-                    text.contains("下一题", ignoreCase = true) ||
-                    text.contains("提交", ignoreCase = true) ||
-                    text.contains("确定", ignoreCase = true) ||
-                    text.contains("next", ignoreCase = true) ||
-                    text.contains("submit", ignoreCase = true) ||
-                    contentDesc.contains("下一", ignoreCase = true) ||
-                    contentDesc.contains("next", ignoreCase = true)
-            
-            if (isClickable && isEnabled && isNextButton) {
-                Log.d(TAG, "Found next button: $text")
-                
-                // 执行点击
+            if (node.isClickable) {
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.d(TAG, "Clicked via ACTION_CLICK")
+            } else {
                 val bounds = Rect()
                 node.getBoundsInScreen(bounds)
                 val x = bounds.centerX().toFloat()
                 val y = bounds.centerY().toFloat()
-                
-                val path = Path().apply {
-                    moveTo(x, y)
-                }
-                
+                val path = Path().apply { moveTo(x, y) }
                 val gesture = GestureDescription.Builder()
                     .addStroke(GestureDescription.StrokeDescription(path, 0, 100))
                     .build()
-                
                 dispatchGesture(gesture, null, null)
+                Log.d(TAG, "Clicked via gesture at ($x, $y)")
+            }
+
+            // 点击完成后自动找下一题
+            mainHandler.postDelayed({ clickNextButton() }, NEXT_BUTTON_DELAY)
+        } catch (e: Exception) {
+            Log.e(TAG, "Click error: ${e.message}")
+        }
+    }
+
+    /** 查找并点击下一题按钮 */
+    private fun clickNextButton() {
+        if (!isEnabled) return
+        try {
+            val rootNode = rootInActiveWindow ?: return
+            if (findAndClickNextButton(rootNode)) {
+                Log.d(TAG, "Clicked next button")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clicking next: ${e.message}")
+        }
+    }
+
+    /** 递归查找下一题按钮（修复：正确使用返回值） */
+    private fun findAndClickNextButton(node: AccessibilityNodeInfo): Boolean {
+        try {
+            val text = node.text?.toString() ?: ""
+            val desc = node.contentDescription?.toString() ?: ""
+            val isNext = text.contains("下一") || text.contains("提交") || text.contains("确定") ||
+                    text.contains("next", ignoreCase = true) || text.contains("submit", ignoreCase = true) ||
+                    desc.contains("下一") || desc.contains("next", ignoreCase = true)
+
+            if (node.isClickable && node.isEnabled && isNext) {
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                 return true
             }
-            
-            // 递归查找
+
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i)
                 if (child != null) {
-                    if (findAndClickNextButton(child, foundNext)) {
+                    if (findAndClickNextButton(child)) {
                         child.recycle()
                         return true
                     }
                     child.recycle()
                 }
             }
-        } catch (e: Exception) {
-            // 忽略
-        }
-        
+        } catch (_: Exception) {}
         return false
     }
 
     override fun onInterrupt() {
         Log.d(TAG, "Service interrupted")
     }
-    
-    /**
-     * 手动触发一次答题处理
-     */
+
     fun triggerAnswer() {
-        mainHandler.postDelayed({
-            processCurrentScreen()
-        }, 300)
+        mainHandler.postDelayed({ processCurrentScreen() }, 300)
     }
-    
-    /**
-     * 刷新题库缓存
-     */
+
     fun refreshCache() {
         loadQuestions()
     }
