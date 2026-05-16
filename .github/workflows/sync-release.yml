@@ -1,6 +1,8 @@
-name: Sync Releases to Gitee
+name: Sync to Gitee
 
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
@@ -9,64 +11,104 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 连接 Gitee 并推送 Tag
-      - name: Push tags to Gitee
+      - name: Sync code & tags to Gitee
         env:
-          GITEE_USER: ${{ secrets.GITEE_USERNAME }}
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_REPO: ${{ secrets.GITEE_REPO }}
+        run: |
+          set -e
+          REMOTE="https://FoolishWiser:${GITEE_TOKEN}@gitee.com/FoolishWiser/QuizSnap.git"
+          git remote add gitee "$REMOTE" 2>/dev/null || git remote set-url gitee "$REMOTE"
+          echo "Push main branch..."
+          git push gitee main --force
+          echo "Push all tags..."
+          git push gitee --tags --force
+          echo "OK"
+
+      - name: Sync release assets to Gitee
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
           set -e
 
-          # 1. 检查必要变量是否为空
-          if [ -z "$GITEE_USER" ] || [ -z "$GITEE_TOKEN" ] || [ -z "$GITEE_REPO" ]; then
-            echo "❌ 缺少必要的 Secret，请检查 GITEE_USERNAME / GITEE_TOKEN / GITEE_REPO 是否已全部配置"
-            exit 1
-          fi
+          GITEE_USER="FoolishWiser"
+          GITEE_REPO="QuizSnap"
+          GITEE_API="https://gitee.com/api/v5/repos/$GITEE_USER/$GITEE_REPO"
 
-          REMOTE_URL="https://${GITEE_USER}:${GITEE_TOKEN}@gitee.com/${GITEE_USER}/${GITEE_REPO}.git"
+          # Delete all existing Gitee releases first
+          echo "Clearing existing Gitee releases..."
+          EXISTING_IDS=$(curl -sS \
+            "$GITEE_API/releases?access_token=$GITEE_TOKEN&per_page=100" \
+            | jq -r '.[].id')
+          for rid in $EXISTING_IDS; do
+            [ -z "$rid" ] && continue
+            curl -sS -X DELETE "$GITEE_API/releases/$rid?access_token=$GITEE_TOKEN" > /dev/null
+            echo "  Deleted release id=$rid"
+          done
+          echo "All cleared"
 
-          # 2. 打印安全地址（隐藏令牌）
-          SAFE_URL="https://${GITEE_USER}:***@gitee.com/${GITEE_USER}/${GITEE_REPO}.git"
-          echo "👉 远程地址: $SAFE_URL"
+          sync_one() {
+            local tag="$1" name="$2" body="$3" prerelease="$4" assets_json="$5"
+            echo "Creating Gitee release $tag ..."
+            local safe_body="${body:-QuizSnap $tag 版本发布}"
+            PAYLOAD=$(jq -n \
+              --arg at "$GITEE_TOKEN" \
+              --arg tag "$tag" \
+              --arg name "$name" \
+              --arg body "$safe_body" \
+              --argjson pre "$prerelease" \
+              '{access_token: $at, tag_name: $tag, name: $name, body: $body, prerelease: $pre, target_commitish: "main"}')
 
-          # 3. 测试能否连接 Gitee 仓库
-          echo "🔍 正在测试 Gitee 仓库连接..."
-          git ls-remote --exit-code "$REMOTE_URL" HEAD
-          if [ $? -ne 0 ]; then
-            echo "❌ 无法访问 Gitee 仓库，请确认："
-            echo "   - 仓库名和用户名是否正确"
-            echo "   - 私人令牌是否有效并勾选了 projects 权限"
-            exit 1
-          fi
-          echo "✅ 连接成功"
+            RESP=$(curl -sS -X POST \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD" \
+              "$GITEE_API/releases")
+            RID=$(echo "$RESP" | jq -r '.id // empty')
 
-          # 4. 添加 remote 并推送
-          git remote add gitee "$REMOTE_URL" || true
+            if [ -z "$RID" ]; then
+              echo "FAIL - API response:"
+              echo "$RESP" | jq .
+              return
+            fi
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "📦 手动触发：推送所有 Tag 到 Gitee..."
-            git push gitee --tags --force
+            echo "$assets_json" | jq -c '.[]' 2>/dev/null | while read -r asset; do
+              aname=$(echo "$asset" | jq -r '.name // empty')
+              aurl=$(echo "$asset" | jq -r '.url // .downloadUrl // empty')
+              [ -z "$aname" ] || [ -z "$aurl" ] && continue
+              echo "Upload $aname ..."
+              curl -sS -L -o "/tmp/$aname" "$aurl"
+              curl -sS -X POST \
+                -F "file=@/tmp/$aname" \
+                "$GITEE_API/releases/$RID/attach_files?access_token=$GITEE_TOKEN" > /dev/null
+              rm -f "/tmp/$aname"
+            done
+          }
+
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            TAG=${GITHUB_REF#refs/tags/}
+            NAME=$(jq -r '.release.name' "$GITHUB_EVENT_PATH")
+            BODY=$(jq -r '.release.body' "$GITHUB_EVENT_PATH")
+            PRE=$(jq -r '.release.prerelease' "$GITHUB_EVENT_PATH")
+            ASSETS=$(jq -c '[.release.assets[] | {name, url: .browser_download_url}]' "$GITHUB_EVENT_PATH")
+            sync_one "$TAG" "$NAME" "$BODY" "$PRE" "$ASSETS"
           else
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-            echo "📦 自动触发：推送 Tag $TAG_NAME 到 Gitee..."
-            git push gitee "$TAG_NAME" --force
+            for tag in $(git tag | sort -V); do
+              [ -z "$tag" ] && continue
+              if DETAILS=$(gh release view "$tag" --json name,body,isPrerelease,assets 2>/dev/null); then
+                n=$(echo "$DETAILS" | jq -r '.name')
+                b=$(echo "$DETAILS" | jq -r '.body')
+                p=$(echo "$DETAILS" | jq -r '.isPrerelease')
+                a=$(echo "$DETAILS" | jq -c '[.assets[] | {name, url: (.url // .downloadUrl)}]')
+              else
+                n="$tag"
+                b=""
+                p="false"
+                a="[]"
+              fi
+              sync_one "$tag" "$n" "$b" "$p" "$a"
+            done
           fi
-
-          echo "✅ Tag 推送完成"
-
-      # 同步 Release 及附件（保持你原来的步骤，不需改动）
-      - name: Sync releases and assets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_USER: ${{ secrets.GITEE_USERNAME }}
-          GITEE_REPO: ${{ secrets.GITEE_REPO }}
-        run: |
-          # ... 保持原来的同步脚本，不用动 ...
-          # 如果你之前复制的是完整版，这里直接用就行
