@@ -15,12 +15,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        run: |
+          # Use sdkmanager to install required platform
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "platforms;android-35" \
+            "build-tools;35.0.0" 2>/dev/null || true
+          # Create local.properties
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+
       - name: Sync code & tags to Gitee
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
           set -e
-          REMOTE="https://FoolishWiser:${GITEE_TOKEN}@gitee.com/FoolishWiser/QuizSnap.git"
+          GITEE_USER="FoolishWiser"
+          GITEE_REPO="QuizSnap"
+          REMOTE="https://${GITEE_USER}:${GITEE_TOKEN}@gitee.com/${GITEE_USER}/${GITEE_REPO}.git"
           git remote add gitee "$REMOTE" 2>/dev/null || git remote set-url gitee "$REMOTE"
           echo "Push main branch..."
           git push gitee main --force
@@ -28,33 +45,49 @@ jobs:
           git push gitee --tags --force
           echo "OK"
 
-      - name: Sync release assets to Gitee
+      - name: Sync releases to Gitee
         if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
           set -e
-
           GITEE_USER="FoolishWiser"
           GITEE_REPO="QuizSnap"
-          GITEE_API="https://gitee.com/api/v5/repos/$GITEE_USER/$GITEE_REPO"
 
-          # Delete all existing Gitee releases first
+          # Delete all existing Gitee releases first (to fix order)
           echo "Clearing existing Gitee releases..."
           EXISTING_IDS=$(curl -sS \
-            "$GITEE_API/releases?access_token=$GITEE_TOKEN&per_page=100" \
+            "https://gitee.com/api/v5/repos/$GITEE_USER/$GITEE_REPO/releases?access_token=$GITEE_TOKEN&per_page=100" \
             | jq -r '.[].id')
           for rid in $EXISTING_IDS; do
             [ -z "$rid" ] && continue
-            curl -sS -X DELETE "$GITEE_API/releases/$rid?access_token=$GITEE_TOKEN" > /dev/null
+            curl -sS -X DELETE \
+              "https://gitee.com/api/v5/repos/$GITEE_USER/$GITEE_REPO/releases/$rid?access_token=$GITEE_TOKEN" > /dev/null
             echo "  Deleted release id=$rid"
           done
-          echo "All cleared"
 
-          sync_one() {
-            local tag="$1" name="$2" body="$3" prerelease="$4" assets_json="$5"
-            echo "Creating Gitee release $tag ..."
+          BUILD_APK() {
+            local tag="$1"
+            echo "::group::Building APK for $tag ..."
+            git checkout "$tag" 2>/dev/null || true
+            chmod +x gradlew 2>/dev/null || true
+            ./gradlew :app:assembleDebug --no-daemon 2>&1 || true
+            local apk="app/build/outputs/apk/debug/app-debug.apk"
+            if [ -f "$apk" ]; then
+              cp "$apk" "/tmp/quizsnap-${tag}.apk"
+              echo "APK ready: /tmp/quizsnap-${tag}.apk"
+            else
+              echo "No APK built for $tag"
+            fi
+            git checkout main 2>/dev/null || true
+            echo "::endgroup::"
+          }
+
+          CREATE_RELEASE() {
+            local tag="$1" name="$2" body="$3" prerelease="$4"
             local safe_body="${body:-QuizSnap $tag 版本发布}"
+
+            echo "Creating Gitee release $tag ..."
             PAYLOAD=$(jq -n \
               --arg at "$GITEE_TOKEN" \
               --arg tag "$tag" \
@@ -66,7 +99,7 @@ jobs:
             RESP=$(curl -sS -X POST \
               -H "Content-Type: application/json" \
               -d "$PAYLOAD" \
-              "$GITEE_API/releases")
+              "https://gitee.com/api/v5/repos/$GITEE_USER/$GITEE_REPO/releases")
             RID=$(echo "$RESP" | jq -r '.id // empty')
 
             if [ -z "$RID" ]; then
@@ -75,17 +108,15 @@ jobs:
               return
             fi
 
-            echo "$assets_json" | jq -c '.[]' 2>/dev/null | while read -r asset; do
-              aname=$(echo "$asset" | jq -r '.name // empty')
-              aurl=$(echo "$asset" | jq -r '.url // .downloadUrl // empty')
-              [ -z "$aname" ] || [ -z "$aurl" ] && continue
-              echo "Upload $aname ..."
-              curl -sS -L -o "/tmp/$aname" "$aurl"
-              curl -sS -X POST \
-                -F "file=@/tmp/$aname" \
-                "$GITEE_API/releases/$RID/attach_files?access_token=$GITEE_TOKEN" > /dev/null
-              rm -f "/tmp/$aname"
-            done
+            # Upload APK if available
+            local apk="/tmp/quizsnap-${tag}.apk"
+            if [ -f "$apk" ]; then
+              echo "Uploading APK ..."
+              UPLOAD_RESP=$(curl -sS -X POST \
+                -F "file=@$apk" \
+                "https://gitee.com/api/v5/repos/$GITEE_USER/$GITEE_REPO/releases/$RID/attach_files?access_token=$GITEE_TOKEN")
+              echo "$UPLOAD_RESP" | jq -r '.name // "Upload done"'
+            fi
           }
 
           if [[ "${{ github.event_name }}" == "release" ]]; then
@@ -93,22 +124,22 @@ jobs:
             NAME=$(jq -r '.release.name' "$GITHUB_EVENT_PATH")
             BODY=$(jq -r '.release.body' "$GITHUB_EVENT_PATH")
             PRE=$(jq -r '.release.prerelease' "$GITHUB_EVENT_PATH")
-            ASSETS=$(jq -c '[.release.assets[] | {name, url: .browser_download_url}]' "$GITHUB_EVENT_PATH")
-            sync_one "$TAG" "$NAME" "$BODY" "$PRE" "$ASSETS"
+            # Build APK for this release
+            BUILD_APK "$TAG"
+            CREATE_RELEASE "$TAG" "$NAME" "$BODY" "$PRE"
           else
+            # workflow_dispatch: process all tags in ascending order
             for tag in $(git tag | sort -V); do
               [ -z "$tag" ] && continue
-              if DETAILS=$(gh release view "$tag" --json name,body,isPrerelease,assets 2>/dev/null); then
+              # Try to get GitHub Release details, fallback to tag-only
+              if DETAILS=$(gh release view "$tag" --json name,body,isPrerelease 2>/dev/null); then
                 n=$(echo "$DETAILS" | jq -r '.name')
                 b=$(echo "$DETAILS" | jq -r '.body')
                 p=$(echo "$DETAILS" | jq -r '.isPrerelease')
-                a=$(echo "$DETAILS" | jq -c '[.assets[] | {name, url: (.url // .downloadUrl)}]')
               else
-                n="$tag"
-                b=""
-                p="false"
-                a="[]"
+                n="$tag"; b=""; p="false"
               fi
-              sync_one "$tag" "$n" "$b" "$p" "$a"
+              BUILD_APK "$tag"
+              CREATE_RELEASE "$tag" "$n" "$b" "$p"
             done
           fi
